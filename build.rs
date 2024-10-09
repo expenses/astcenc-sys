@@ -3,50 +3,11 @@ use std::{env, path};
 fn main() {
     let out_path = path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
 
-    let include_paths = match pkg_config::Config::new().probe("astc-encoder") {
-        Ok(astcenc) => {
-            for path in astcenc.link_paths {
-                println!("cargo:rustc-link-path={}", path.to_str().unwrap());
-            }
-            for lib in astcenc.libs {
-                println!("cargo:rustc-link-lib={}", lib);
-            }
-
-            astcenc
-                .include_paths
-                .into_iter()
-                .map(|p| p.into_os_string().into_string().unwrap())
-                .collect::<Vec<_>>()
-        }
-        _ => {
-            let source_root = path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-                .join("astc-encoder");
-
-            // See <https://github.com/ARM-software/astc-encoder/blob/main/CMakeLists.txt>.
-            let dst_root = cmake::Config::new(&source_root)
-                .define("ASTCENC_UNIVERSAL_BUILD", "OFF")
-                .define("ASTCENC_ISA_NATIVE", "ON")
-                .build();
-
-            println!("cargo:rustc-link-lib=astcenc-native-static");
-            // Non-Windows.
-            println!(
-                "cargo:rustc-link-search={}",
-                dst_root.join("build").join("Source").display()
-            );
-            // Windows.
-            println!(
-                "cargo:rustc-link-search={}",
-                dst_root
-                    .join("build")
-                    .join("Source")
-                    .join("Release")
-                    .display()
-            );
-
-            vec![source_root.join("Source").display().to_string()]
-        }
-    };
+    println!(
+        "cargo:rustc-link-lib={}",
+        env::var("ASTCENC_LIB_PATH").unwrap()
+    );
+    let include_path = env::var("ASTCENC_HEADER_PATH").unwrap();
 
     // Link to libstdc++ on GNU
     let target = env::var("TARGET").unwrap();
@@ -56,9 +17,9 @@ fn main() {
         println!("cargo:rustc-link-lib=c++");
     }
 
-    let mut bindings = bindgen::Builder::default()
+    let bindings = bindgen::Builder::default()
         .clang_arg("-xc++")
-        .header("wrapper.h")
+        .header(&include_path)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .derive_partialeq(true)
         .derive_eq(true)
@@ -66,10 +27,6 @@ fn main() {
         .derive_debug(true)
         // Bypasses an issue with bindgen that makes it generate invalid Rust code.
         .blocklist_item("std::value");
-
-    for path in include_paths {
-        bindings = bindings.clang_args(&["-F", &path]);
-    }
 
     let bindings = bindings.generate().expect("Unable to generate bindings");
 
